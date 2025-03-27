@@ -18,6 +18,7 @@ import NavbarSwitch from "./utils/navbarSwitch.jsx";
 import SleepTracker from "./components/Pages/SleepTracker.jsx";
 import { AuthProvider } from "./utils/authProvider.jsx";
 import BreathingGame from "./components/Pages/Breathing.jsx";
+import Profile from "./components/Pages/Profile.jsx";
 
 const routeDefinitions = [
   { path: "/", element: <Home /> },
@@ -33,7 +34,8 @@ const routeDefinitions = [
   { path: "/blogs", element: <AuthenticatedRoute element={<Dashboard />} /> },
   { path: "/about", element: <AboutUsPage /> },
   { path: "/forgot-password", element: <ForgotPassword /> },
-  { path:"/breathing-game", element: <BreathingGame />},
+  { path: "/breathing-game", element: <BreathingGame /> },
+  { path: "/profile", element: <AuthenticatedRoute element={<Profile />} /> },
   { path: "*", element: <PageNotFound /> },
 ];
    
