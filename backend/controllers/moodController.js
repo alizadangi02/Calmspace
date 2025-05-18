@@ -1,95 +1,73 @@
-import Mood from '../models/MoodModel.js';
-import User from '../models/UserModel.js';
+const MoodEntry = require("../models/moodEntry");
 
-export const createMood = async (req, res) => {
-  const { stress, energy, happiness, calmness, focus, description, date } = req.body;
-
+// GET /api/mood
+exports.getMyEntries = async (req, res, next) => {
   try {
-    const newMood = new Mood({
-      stress, 
-      energy, 
-      happiness, 
-      calmness, 
-      focus,
-      description,
+    const entries = await MoodEntry.find({ user: req.user.id }).sort("-date");
+    res.json({ entries });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /api/mood/:id
+exports.getEntryById = async (req, res, next) => {
+  try {
+    const entry = await MoodEntry.findById(req.params.id);
+    if (!entry || entry.user.toString() !== req.user.id) {
+      return res.status(404).json({ message: "Entry not found" });
+    }
+    res.json({ entry });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /api/mood
+exports.createEntry = async (req, res, next) => {
+  try {
+    const { date, mood, rating, notes } = req.body;
+    const entry = await MoodEntry.create({
+      user: req.user.id,
       date,
-      user: req.user.id 
+      mood,
+      rating,
+      notes,
     });
-
-    const savedMood = await newMood.save();
-
-    const user = await User.findById(req.user.id);
-    user.moods.push(savedMood._id);
-    await user.save();
-
-    res.status(201).json(savedMood);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(201).json({ entry });
+  } catch (err) {
+    next(err);
   }
 };
 
-export const getUserMoods = async (req, res) => {
+// PUT /api/mood/:id
+exports.updateEntry = async (req, res, next) => {
   try {
-    const moods = await Mood.find({ user: req.user._id }).exec();
-    // console.log(moods)
-    res.json(moods);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
-
-
-export const getMoodById = async (req, res) => {
-  try {
-    const mood = await Mood.findById(req.params.id);
-    if (!mood ) {
-      return res.status(404).json({ message: "Mood not found" });
+    const entry = await MoodEntry.findById(req.params.id);
+    if (!entry || entry.user.toString() !== req.user.id) {
+      return res.status(404).json({ message: "Entry not found" });
     }
-
-    res.status(200).json(mood);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
+    const updates = ["mood", "rating", "notes"];
+    updates.forEach((field) => {
+      if (field in req.body) entry[field] = req.body[field];
+    });
+    await entry.save();
+    res.json({ entry });
+  } catch (err) {
+    next(err);
   }
 };
 
-export const updateMood = async (req, res) => {
+// DELETE /api/mood/:id
+exports.deleteEntry = async (req, res, next) => {
   try {
-    const mood = await Mood.findById(req.params.id);
-
-    if (!mood ) {
-      return res.status(404).json({ message: "Mood not found" });
+    const entry = await MoodEntry.findById(req.params.id);
+    if (!entry || entry.user.toString() !== req.user.id) {
+      return res.status(404).json({ message: "Entry not found" });
     }
-
-    mood.focus = req.body.focus || mood.focus;
-    mood.calmness = req.body.calmness || mood.calmness;
-    mood.energy = req.body.energy || mood.energy;
-    mood.happiness = req.body.happiness || mood.happiness;
-    mood.stress = req.body.stress || mood.stress;
-    mood.description = req.body.description || mood.description;
-    mood.date = req.body.date || mood.date;
-
-    const updatedMood = await mood.save();
-    res.status(200).json(updatedMood);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
-
-export const deleteMood = async (req, res) => {
-  try {
-    const user = await User.findById(req.user._id);
-    const mood = await Mood.findById(req.params.id);
-
-    if (!mood ) {
-      return res.status(404).json({ message: "Mood not found" });
-    }
-
-    await mood.remove();
-    user.moods = user.moods.filter(m => m.toString() !== req.params.id);
-    await user.save();
-
-    res.status(200).json({ message: "Mood deleted successfully" });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
+    await MoodEntry.findByIdAndDelete(req.params.id);
+    res.json({ message: "Entry deleted" });
+  } catch (err) {
+    next(err);
   }
 };

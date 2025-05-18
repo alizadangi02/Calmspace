@@ -1,77 +1,123 @@
-import User from '../models/UserModel.js';
-import Post from '../models/PostModel.js';
+const User = require("../models/User");
+const ChatSession = require("../models/chatSession");
+const ChatMessage = require("../models/chatMessage");
+const MoodEntry = require("../models/moodEntry");
+const Resource = require("../models/resources");
 
-// Get all therapists
-export const getAllTherapists = async (req, res) => {
+exports.getTherapists = async (req, res, next) => {
   try {
-    const therapists = await User.find({ role: 'therapist' })
-      .select('-password')
+    // Only return users with role === 'therapist'
+    const filter = { role: "therapist" };
+
+    // If a status query param is provided, filter by it
+    if (req.query.status) {
+      filter.status = req.query.status;
+    }
+
+    // Fetch therapists, excluding the password field
+    const therapists = await User.find(filter)
+      .select("-password")
+      .sort({ createdAt: -1 }); // newest first
+
+    res.json({ therapists });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.approveTherapist = async (req, res, next) => {
+  try {
+    const therapist = await User.findById(req.params.id);
+    if (!therapist || therapist.role !== "therapist") {
+      return res.status(404).json({ message: "Therapist not found" });
+    }
+    therapist.status = "approved";
+    await therapist.save();
+    res.json({ message: "Therapist approved", user: therapist });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.deleteTherapist = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const th = await User.findById(id);
+    if (!th || th.role !== "therapist") {
+      return res.status(404).json({ message: "Therapist not found" });
+    }
+
+    await User.findByIdAndDelete(id);
+    res.json({ message: "Therapist deleted" });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.getUsers = async (req, res, next) => {
+  try {
+    const users = await User.find({ role: "user" })
+      .select("-password")
       .sort({ createdAt: -1 });
-    res.status(200).json(therapists);
-  } catch (error) {
-    res.status(500).json({ message: 'Error fetching therapists', error: error.message });
+    res.json({ users });
+  } catch (err) {
+    next(err);
   }
 };
 
-// Verify a therapist
-export const verifyTherapist = async (req, res) => {
+exports.deleteUser = async (req, res, next) => {
   try {
-    const { therapistId } = req.params;
-    const updatedTherapist = await User.findByIdAndUpdate(
-      therapistId,
-      { isTherapistVerified: true },
-      { new: true }
-    ).select('-password');
-
-    if (!updatedTherapist) {
-      return res.status(404).json({ message: 'Therapist not found' });
-    }
-
-    res.status(200).json(updatedTherapist);
-  } catch (error) {
-    res.status(500).json({ message: 'Error verifying therapist', error: error.message });
+    const u = await User.findById(req.params.id);
+    if (!u || u.role !== "user")
+      return res.status(404).json({ message: "Not found" });
+    await u.remove();
+    res.json({ message: "Deleted" });
+  } catch (err) {
+    next(err);
   }
 };
 
-// Get all posts for admin review
-export const getAllPosts = async (req, res) => {
+exports.getStats = async (req, res, next) => {
   try {
-    const posts = await Post.find()
-      .populate('author', 'name email')
-      .sort({ createdAt: -1 });
-    res.status(200).json(posts);
-  } catch (error) {
-    res.status(500).json({ message: 'Error fetching posts', error: error.message });
-  }
-};
+    // count total users (role: user)
+    const userCount = await User.countDocuments({ role: "user" });
 
-// Delete a post
-export const deletePost = async (req, res) => {
-  try {
-    const { postId } = req.params;
-    const deletedPost = await Post.findByIdAndDelete(postId);
+    // count approved therapists + pending ones
+    const therapistCount = await User.countDocuments({
+      role: "therapist",
+      status: "approved",
+    });
+    const pendingTherapistCount = await User.countDocuments({
+      role: "therapist",
+      status: "pending",
+    });
 
-    if (!deletedPost) {
-      return res.status(404).json({ message: 'Post not found' });
-    }
+    // chat sessions & total messages
+    const chatSessions = await ChatSession.countDocuments();
+    const chatMessages = await ChatMessage.countDocuments();
 
-    res.status(200).json({ message: 'Post deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ message: 'Error deleting post', error: error.message });
-  }
-};
+    // mood tracker entries
+    const moodEntries = await MoodEntry.countDocuments();
 
-// Admin middleware to check if user is admin
-export const isAdmin = async (req, res, next) => {
-  try {
-    const user = await User.findById(req.user.id);
-    
-    if (!user || user.role !== 'admin') {
-      return res.status(403).json({ message: 'Access denied. Admin only.' });
-    }
-    
-    next();
-  } catch (error) {
-    res.status(500).json({ message: 'Error checking admin status', error: error.message });
+    // resources by status
+    const resourcesApproved = await Resource.countDocuments({
+      status: "approved",
+    });
+    const resourcesPending = await Resource.countDocuments({
+      status: "pending",
+    });
+
+    res.json({
+      userCount,
+      therapistCount,
+      pendingTherapistCount,
+      chatSessions,
+      chatMessages,
+      moodEntries,
+      resourcesApproved,
+      resourcesPending,
+    });
+  } catch (err) {
+    next(err);
   }
 };

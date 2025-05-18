@@ -1,186 +1,94 @@
-import jwt from "jsonwebtoken";
-import User from "../models/UserModel.js";
-import bcrypt from "bcrypt";
-import nodemailer from "nodemailer";
-import crypto from "crypto";
+const User = require("../models/User");
+const bcrypt = require("bcryptjs");
 
-export const registerControllers = async (req, res, next) => {
+// get data of user
+exports.getProfile = async (req, res, next) => {
   try {
-    const { name, email, password } = req.body;
-
-    if (!name || !email || !password) {
-      return res.status(400).json({
-        success: false,
-        message: "Please enter All Fields"
-      });
-    }
-
-    let user = await User.findOne({ email });
-
-    if (user) {
-      return res.status(409).json({
-        success: false,
-        message: "User already exists"
-      });
-    }
-
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
-
-    let newUser = await User.create({
-      name,
-      email,
-      password: hashedPassword
-    });
-
-    return res.status(200).json({
-      success: true,
-      message: "User created successfully",
-      user: newUser
-    });
-  } catch (err) {
-    return res.status(500).json({
-      success: false,
-      message: err.message
-    });
-  }
-};
-
-export const loginControllers = async (req, res, next) => {
-  try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({
-        success: false,
-        message: "Please enter all fields"
-      });
-    }
-
-    const user = await User.findOne({ email });
-
+    const user = await User.findById(req.user.id)
+      .select("-password")
+      .populate("therapists", "name specialties degree institution");
     if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: "User not found"
-      });
+      return res.status(404).json({ message: "User not found" });
     }
-
-    const isMatch = await bcrypt.compare(password, user.password);
-
-    if (!isMatch) {
-      return res.status(401).json({
-        success: false,
-        message: "Incorrect email or password"
-      });
-    }
-    console.log(process.env.JWT_SECRET);
-    const token = jwt.sign(
-      { id: user._id, email: user.email },
-      process.env.JWT_SECRET,
-      { expiresIn: "1h" }
-    );
-
-    return res.status(200).json({
-      success: true,
-      message: `Welcome back, ${user.name}`,
-      token,
-      user: {
-        _id: user._id,
-        name: user.name,
-        email: user.email
-      }
-    });
-  } catch (err) {
-    return res.status(500).json({
-      success: false,
-      message: err.message
-    });
-  }
-};
-
-export const allUsers = async (req, res, next) => {
-  try {
-    const users = await User.find({ _id: { $ne: req.params.id } }).select([
-      "email",
-      "name",
-      "_id"
-    ]);
-
-    return res.json(users);
+    res.json({ user });
   } catch (err) {
     next(err);
   }
 };
 
-// reset password //
-export const resetPasswordControllers = async (req, res) => {
+// update profile
+exports.updateProfile = async (req, res, next) => {
   try {
-    const { email } = req.body;
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
+    const userId = req.user.id;
+    const {
+      name,
+      email,
+      password,
+      emergencyContact,
+      notificationPrefs,
+      specialties,
+      degree,
+      institution,
+    } = req.body;
+
+    const update = { name, email };
+
+    // allow password change
+    if (password) {
+      const salt = await bcrypt.genSalt(10);
+      update.password = await bcrypt.hash(password, salt);
     }
 
-    const resetToken = crypto.randomBytes(3).toString("hex");
+    // role‐specific fields
+    if (req.user.role === "user") {
+      if (emergencyContact) update.emergencyContact = emergencyContact;
+      if (notificationPrefs) update.notificationPrefs = notificationPrefs;
+    }
+    if (req.user.role === "therapist") {
+      if (specialties) update.specialties = specialties;
+      if (degree) update.degree = degree;
+      if (institution) update.institution = institution;
+    }
 
-    let transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.GMAIL,
-        pass: process.env.APP_PASSWORD
-      }
-    });
+    const user = await User.findByIdAndUpdate(userId, update, {
+      new: true,
+      runValidators: true,
+    }).select("-password");
 
-    let mailOptions = {
-      from: process.env.GMAIL,
-      to: email,
-      subject: "Password Reset Code",
-      text: `Your password reset code is: ${resetToken}`
-    };
-    transporter.sendMail(mailOptions, async (error, info) => {
-      if (error) {
-        return res.status(500).json({ message: "Failed to send email", error });
-      }
-
-      user.resetToken = resetToken;
-      user.tokenExpires = Date.now() + 3600000;
-      await user.save();
-
-      res.status(200).json({ message: "Reset code sent to your email." });
-    });
-  } catch (error) {
-    res.status(500).json({ message: "Failed to reset password", error });
+    res.json({ user });
+  } catch (err) {
+    // duplicate email?
+    if (err.code === 11000) {
+      return res.status(400).json({ message: "Email already in use" });
+    }
+    next(err);
   }
 };
 
-// confirm password //
-export const passwordConfirmControllers = async (req, res) => {
+// select therapist
+exports.selectTherapist = async (req, res, next) => {
   try {
-    const { email, resetToken, newPassword } = req.body;
+    const { therapistId } = req.body;
 
-    const user = await User.findOne({
-      email,
-      resetToken,
-      tokenExpires: { $gt: Date.now() }
+    // 1) validate therapist
+    const ther = await User.findOne({
+      _id: therapistId,
+      role: "therapist",
+      status: "approved",
     });
-
-    if (!user) {
-      return res
-        .status(400)
-        .json({ message: "Invalid or expired reset token" });
+    if (!ther) {
+      return res.status(400).json({ message: "Invalid therapist" });
     }
 
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    // 2) push into the array (no duplicates)
+    const updated = await User.findByIdAndUpdate(
+      req.user.id,
+      { $addToSet: { therapists: therapistId } },
+      { new: true }
+    ).select("-password");
 
-    user.password = hashedPassword;
-    user.resetToken = undefined;
-    user.tokenExpires = undefined;
-
-    await user.save();
-
-    res.status(200).json({ message: "Password has been successfully updated" });
-  } catch (error) {
-    res.status(500).json({ message: "Failed to reset password", error });
+    res.json({ message: "Therapist added", user: updated });
+  } catch (err) {
+    next(err);
   }
 };
